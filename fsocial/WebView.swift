@@ -15,15 +15,62 @@ class WebViewProcessPool {
 }
 
 // MARK: - WebView Coordinator
-class WebViewCoordinator: NSObject, ObservableObject, WKNavigationDelegate {
+class WebViewCoordinator: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
     @Published var currentURL: URL?
     @Published var canGoBack: Bool = false
     @Published var canGoForward: Bool = false
     @Published var isLoading: Bool = false
     @Published var pageTitle: String = ""
     @Published var extractedContent: String = ""
+    @Published var isMuted: Bool = true
     
     weak var webView: WKWebView?
+    
+    // MARK: - Audio Control
+    func setMuted(_ muted: Bool) {
+        isMuted = muted
+        guard let webView = webView else { return }
+        
+        // Use JavaScript to mute/unmute all audio and video elements
+        let script = muted ? """
+            (function() {
+                // Mute all video elements
+                document.querySelectorAll('video').forEach(function(v) {
+                    v.muted = true;
+                    v.pause();
+                });
+                // Mute all audio elements
+                document.querySelectorAll('audio').forEach(function(a) {
+                    a.muted = true;
+                    a.pause();
+                });
+                // Store muted state
+                window._fsocialMuted = true;
+            })();
+        """ : """
+            (function() {
+                // Unmute all video elements (but don't auto-play)
+                document.querySelectorAll('video').forEach(function(v) {
+                    v.muted = false;
+                });
+                // Unmute all audio elements
+                document.querySelectorAll('audio').forEach(function(a) {
+                    a.muted = false;
+                });
+                // Store muted state
+                window._fsocialMuted = false;
+            })();
+        """
+        
+        webView.evaluateJavaScript(script, completionHandler: nil)
+    }
+    
+    // Inject mute script on page load if muted
+    func injectMuteScriptIfNeeded() {
+        if isMuted {
+            setMuted(true)
+        }
+    }
     
     func goBack() {
         guard let webView = webView else { return }
@@ -455,7 +502,38 @@ class WebViewCoordinator: NSObject, ObservableObject, WKNavigationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 self.updateNavigationState()
             }
+            // Inject mute script if this tab should be muted
+            self.injectMuteScriptIfNeeded()
         }
+    }
+    
+    // MARK: - WKUIDelegate (for popups, alerts, new windows)
+    
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        // Handle popup requests by loading in the same webView (important for login flows)
+        if navigationAction.targetFrame == nil {
+            webView.load(navigationAction.request)
+        }
+        return nil
+    }
+    
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+        completionHandler()
+    }
+    
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        let result = alert.runModal()
+        completionHandler(result == .alertFirstButtonReturn)
     }
     
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
@@ -674,14 +752,25 @@ struct WebView: NSViewRepresentable {
         configuration.processPool = WebViewProcessPool.shared
         configuration.websiteDataStore = .default()
         
-        // Enable JavaScript
+        // Enable JavaScript and modern web features
         let preferences = WKPreferences()
+        preferences.javaScriptCanOpenWindowsAutomatically = true
         configuration.preferences = preferences
+        
+        // Web page preferences for better compatibility
+        let webpagePreferences = WKWebpagePreferences()
+        webpagePreferences.allowsContentJavaScript = true
+        configuration.defaultWebpagePreferences = webpagePreferences
         
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = coordinator
+        webView.uiDelegate = coordinator  // Important for login popups
         webView.allowsBackForwardNavigationGestures = true
-        webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+        webView.allowsLinkPreview = true
+        
+        // Use Chrome user agent for better compatibility with TikTok and Instagram
+        // These platforms often block Safari/WebKit user agents
+        webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         
         coordinator.webView = webView
         webView.load(URLRequest(url: url))

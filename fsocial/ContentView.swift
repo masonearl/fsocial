@@ -102,12 +102,28 @@ struct ContentView: View {
                     .transition(.opacity)
                 }
             }
+            .onChange(of: selectedPlatform) { newPlatform in
+                // Mute all tabs except the selected one
+                updateAudioForPlatform(newPlatform)
+            }
+            .onChange(of: viewMode) { newMode in
+                // Mute all tabs when not in browser mode
+                if newMode != .browser {
+                    muteAllTabs()
+                } else {
+                    updateAudioForPlatform(selectedPlatform)
+                }
+            }
         }
         .background(Color.appBackground)
         .toast(isShowing: $showToast, message: toastMessage)
         .onAppear {
             // Check for updates on launch
             updateChecker.checkForUpdates()
+            // Initialize audio state - mute all except selected platform
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                updateAudioForPlatform(selectedPlatform)
+            }
         }
         .onReceive(updateChecker.$updateAvailable) { available in
             if available {
@@ -147,6 +163,26 @@ struct ContentView: View {
         toastMessage = "Copied!"
         withAnimation {
             showToast = true
+        }
+    }
+    
+    // MARK: - Audio Control
+    
+    /// Mute all tabs except the specified platform
+    private func updateAudioForPlatform(_ activePlatform: Platform) {
+        for platform in Platform.allCases {
+            if let coordinator = coordinators[platform] {
+                coordinator.setMuted(platform != activePlatform)
+            }
+        }
+    }
+    
+    /// Mute all tabs (used when switching to non-browser views)
+    private func muteAllTabs() {
+        for platform in Platform.allCases {
+            if let coordinator = coordinators[platform] {
+                coordinator.setMuted(true)
+            }
         }
     }
 }

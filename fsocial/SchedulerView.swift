@@ -18,6 +18,10 @@ struct SchedulerView: View {
             // Header
             header
             
+            if scheduleStore.notificationsDenied || scheduleStore.lastNotificationError != nil || scheduleStore.lastSaveError != nil {
+                notificationBanner
+            }
+            
             Divider()
                 .background(Color.appBorder)
             
@@ -40,6 +44,9 @@ struct SchedulerView: View {
         }
         .sheet(item: $editingPost) { post in
             EditPostSheet(scheduleStore: scheduleStore, post: post)
+        }
+        .onAppear {
+            scheduleStore.refreshNotificationStatus()
         }
     }
     
@@ -70,6 +77,57 @@ struct SchedulerView: View {
         }
         .padding(AppDimensions.padding)
         .background(Color.appBackground)
+    }
+    
+    private var notificationBanner: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "bell.slash.fill")
+                .foregroundStyle(Color.orange)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                if scheduleStore.notificationsDenied {
+                    Text("Notifications are off")
+                        .font(AppTypography.bodyMedium)
+                        .foregroundStyle(Color.appText)
+                    Text("Reminders won’t fire until notifications are allowed for fsocial.")
+                        .font(AppTypography.sectionLabel)
+                        .foregroundStyle(Color.appTextMuted)
+                }
+                
+                if let error = scheduleStore.lastNotificationError {
+                    Text(error)
+                        .font(AppTypography.sectionLabel)
+                        .foregroundStyle(Color.orange)
+                }
+                
+                if let error = scheduleStore.lastSaveError {
+                    Text(error)
+                        .font(AppTypography.sectionLabel)
+                        .foregroundStyle(Color.red)
+                }
+            }
+            
+            Spacer()
+            
+            if scheduleStore.notificationsDenied {
+                Button("Open Settings") {
+                    scheduleStore.openNotificationSettings()
+                }
+                .font(AppTypography.sectionLabel)
+                .foregroundStyle(Color.appAccent)
+                .buttonStyle(.plain)
+                
+                Button("Retry") {
+                    scheduleStore.requestNotificationPermission()
+                }
+                .font(AppTypography.sectionLabel)
+                .foregroundStyle(Color.appAccent)
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, AppDimensions.padding)
+        .padding(.vertical, 10)
+        .background(Color.orange.opacity(0.12))
     }
     
     // MARK: - Calendar Section

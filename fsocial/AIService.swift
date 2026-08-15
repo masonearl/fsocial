@@ -88,24 +88,62 @@ class AIService: ObservableObject {
         suggestedReplies = [] // Clear old suggestions
     }
     
-    // MARK: - API Key Management
+    // MARK: - API Key Management (Keychain)
     
-    func saveAPIKey(_ key: String) {
-        UserDefaults.standard.set(key, forKey: apiKeyPrefix + selectedProvider.rawValue)
-        hasAPIKey = true
+    private func account(for provider: AIProvider) -> String {
+        apiKeyPrefix + provider.rawValue
+    }
+    
+    @discardableResult
+    func saveAPIKey(_ key: String) -> Bool {
+        do {
+            try KeychainHelper.save(account: account(for: selectedProvider), secret: key)
+            // Remove any legacy plaintext copy from UserDefaults
+            UserDefaults.standard.removeObject(forKey: account(for: selectedProvider))
+            hasAPIKey = true
+            lastError = nil
+            return true
+        } catch {
+            lastError = "Could not save API key: \(error.localizedDescription)"
+            return false
+        }
     }
     
     func getAPIKey() -> String? {
-        UserDefaults.standard.string(forKey: apiKeyPrefix + selectedProvider.rawValue)
+        do {
+            if let key = try KeychainHelper.load(account: account(for: selectedProvider)) {
+                return key
+            }
+            // One-time migration from older plaintext UserDefaults storage
+            let legacyKey = account(for: selectedProvider)
+            if let legacy = UserDefaults.standard.string(forKey: legacyKey), !legacy.isEmpty {
+                try KeychainHelper.save(account: legacyKey, secret: legacy)
+                UserDefaults.standard.removeObject(forKey: legacyKey)
+                return legacy
+            }
+            return nil
+        } catch {
+            lastError = "Could not read API key: \(error.localizedDescription)"
+            return nil
+        }
     }
     
     func clearAPIKey() {
-        UserDefaults.standard.removeObject(forKey: apiKeyPrefix + selectedProvider.rawValue)
-        hasAPIKey = false
+        do {
+            try KeychainHelper.delete(account: account(for: selectedProvider))
+            UserDefaults.standard.removeObject(forKey: account(for: selectedProvider))
+            hasAPIKey = false
+            lastError = nil
+        } catch {
+            lastError = "Could not remove API key: \(error.localizedDescription)"
+        }
     }
     
     func hasKey(for provider: AIProvider) -> Bool {
-        UserDefaults.standard.string(forKey: apiKeyPrefix + provider.rawValue) != nil
+        if let key = try? KeychainHelper.load(account: account(for: provider)), !key.isEmpty {
+            return true
+        }
+        return UserDefaults.standard.string(forKey: account(for: provider)) != nil
     }
     
     // MARK: - Generate Smart Replies

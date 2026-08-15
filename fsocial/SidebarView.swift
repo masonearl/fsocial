@@ -407,15 +407,23 @@ struct SidebarView: View {
 
                 Button("Save") {
                     if !apiKeyInput.isEmpty {
-                        aiService.saveAPIKey(apiKeyInput)
-                        apiKeyInput = ""
-                        showingAPIKeySheet = false
+                        if aiService.saveAPIKey(apiKeyInput) {
+                            apiKeyInput = ""
+                            showingAPIKeySheet = false
+                        }
                     }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color.appAccent)
             }
             .frame(width: 340)
+
+            if let error = aiService.lastError {
+                Text(error)
+                    .font(AppTypography.sectionLabel)
+                    .foregroundStyle(Color.red)
+                    .frame(width: 340, alignment: .leading)
+            }
 
             if aiService.hasAPIKey {
                 Divider()
@@ -431,6 +439,9 @@ struct SidebarView: View {
         .padding(24)
         .frame(width: 400)
         .background(Color.appBackground)
+        .onAppear {
+            aiService.lastError = nil
+        }
     }
     
     // MARK: - Quick Replies Section

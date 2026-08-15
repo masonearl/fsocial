@@ -12,17 +12,47 @@ class UpdateChecker: ObservableObject {
     @Published var downloadProgress: Double = 0
     @Published var downloadedDMGPath: URL?
     
+    /// Mac App Store product id for fsocial.
+    static let appStoreProductID = "6757682355"
+    
     private let currentVersion: String
-    private let githubRepo = "buildmase/fsocial"
+    private let githubRepo = "masonearl/fsocial"
     private var downloadTask: URLSessionDownloadTask?
     
     var currentVersionString: String { currentVersion }
+    
+    /// True when running from a Mac App Store install (receipt present under _MASReceipt).
+    /// DMG / Developer ID builds must keep GitHub updates; MAS builds must not self-update via DMG.
+    var isAppStoreDistribution: Bool {
+        #if APP_STORE
+        return true
+        #else
+        guard let receiptURL = Bundle.main.appStoreReceiptURL else { return false }
+        guard receiptURL.path.contains("_MASReceipt") else { return false }
+        return FileManager.default.fileExists(atPath: receiptURL.path)
+        #endif
+    }
+    
+    var appStoreURL: URL {
+        URL(string: "macappstore://apps.apple.com/app/id\(Self.appStoreProductID)")!
+    }
+    
+    var appStoreHTTPSURL: URL {
+        URL(string: "https://apps.apple.com/app/id\(Self.appStoreProductID)")!
+    }
     
     init() {
         currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
     }
     
     func checkForUpdates() {
+        // MAS binaries never download a DMG or replace /Applications — updates go through the App Store.
+        if isAppStoreDistribution {
+            updateAvailable = false
+            downloadURL = nil
+            return
+        }
+        
         guard let url = URL(string: "https://api.github.com/repos/\(githubRepo)/releases/latest") else {
             return
         }
@@ -43,10 +73,8 @@ class UpdateChecker: ObservableObject {
                    let assets = json["assets"] as? [[String: Any]],
                    let body = json["body"] as? String {
                     
-                    // Clean version string (remove 'v' prefix if present)
                     let latestVer = tagName.replacingOccurrences(of: "v", with: "")
                     
-                    // Find DMG download URL
                     let dmgAsset = assets.first { asset in
                         (asset["name"] as? String)?.hasSuffix(".dmg") == true
                     }
@@ -60,7 +88,6 @@ class UpdateChecker: ObservableObject {
                             self.downloadURL = URL(string: urlString)
                         }
                         
-                        // Compare versions
                         if self.isNewerVersion(latestVer, than: self.currentVersion) {
                             self.updateAvailable = true
                         }
@@ -89,20 +116,33 @@ class UpdateChecker: ObservableObject {
         return false
     }
     
-    func openDownloadPage() {
-        if let url = downloadURL {
-            NSWorkspace.shared.open(url)
-        } else {
-            // Fallback to releases page
-            if let url = URL(string: "https://github.com/\(githubRepo)/releases/latest") {
-                NSWorkspace.shared.open(url)
-            }
+    func openAppStorePage() {
+        if !NSWorkspace.shared.open(appStoreURL) {
+            NSWorkspace.shared.open(appStoreHTTPSURL)
         }
     }
     
-    // MARK: - Auto Download & Install
+    func openDownloadPage() {
+        if isAppStoreDistribution {
+            openAppStorePage()
+            return
+        }
+        
+        if let url = downloadURL {
+            NSWorkspace.shared.open(url)
+        } else if let url = URL(string: "https://github.com/\(githubRepo)/releases/latest") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+    
+    // MARK: - Auto Download & Install (direct / GitHub builds only)
     
     func downloadAndInstall() {
+        if isAppStoreDistribution {
+            openAppStorePage()
+            return
+        }
+        
         guard let url = downloadURL else {
             openDownloadPage()
             return
@@ -128,9 +168,11 @@ class UpdateChecker: ObservableObject {
     }
     
     func installUpdate() {
+        guard !isAppStoreDistribution else {
+            openAppStorePage()
+            return
+        }
         guard let dmgPath = downloadedDMGPath else { return }
-        
-        // Perform automatic in-place update
         performAutomaticUpdate(dmgPath: dmgPath)
     }
     
@@ -138,15 +180,12 @@ class UpdateChecker: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             
-            // Get current app path
             let currentAppPath = Bundle.main.bundleURL
             
-            // Get Applications folder
             let applicationsURL = FileManager.default.urls(for: .applicationDirectory, in: .localDomainMask).first!
             let appName = "fsocial.app"
             let targetAppPath = applicationsURL.appendingPathComponent(appName)
             
-            // Mount the DMG
             let mountResult = self.mountDMG(at: dmgPath)
             guard let mountPoint = mountResult else {
                 DispatchQueue.main.async {
@@ -155,7 +194,6 @@ class UpdateChecker: ObservableObject {
                 return
             }
             
-            // Find the app bundle in the mounted DMG
             guard let sourceAppPath = self.findAppBundle(in: mountPoint) else {
                 self.unmountDMG(at: mountPoint)
                 DispatchQueue.main.async {
@@ -164,13 +202,10 @@ class UpdateChecker: ObservableObject {
                 return
             }
             
-            // Quit the app before replacing
             DispatchQueue.main.async {
                 self.showInstallingAlert()
                 
-                // Give user a moment to see the alert, then quit and replace
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    // Replace the app
                     DispatchQueue.global(qos: .userInitiated).async {
                         let success = self.replaceApplication(
                             from: sourceAppPath,
@@ -178,16 +213,12 @@ class UpdateChecker: ObservableObject {
                             currentApp: currentAppPath
                         )
                         
-                        // Unmount DMG
                         self.unmountDMG(at: mountPoint)
                         
                         if success {
-                            // Launch the updated app first, then quit
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                // Launch updated app
                                 self.launchUpdatedApp(at: targetAppPath)
                                 
-                                // Give it a moment to start, then quit current app
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                                     NSApplication.shared.terminate(nil)
                                 }
@@ -195,7 +226,6 @@ class UpdateChecker: ObservableObject {
                         } else {
                             DispatchQueue.main.async {
                                 self.showError("Failed to install update. The DMG has been opened - please drag the app to Applications manually.")
-                                // Fallback: open DMG for manual installation
                                 NSWorkspace.shared.open(dmgPath)
                             }
                         }
@@ -245,13 +275,11 @@ class UpdateChecker: ObservableObject {
         let fileManager = FileManager.default
         let appName = "fsocial.app"
         
-        // Check root of mount point
         let rootApp = directory.appendingPathComponent(appName)
         if fileManager.fileExists(atPath: rootApp.path) {
             return rootApp
         }
         
-        // Search recursively
         if let enumerator = fileManager.enumerator(at: directory, includingPropertiesForKeys: [.isDirectoryKey], options: []) {
             for case let fileURL as URL in enumerator {
                 if fileURL.lastPathComponent == appName {
@@ -266,50 +294,38 @@ class UpdateChecker: ObservableObject {
     private func replaceApplication(from source: URL, to destination: URL, currentApp: URL) -> Bool {
         let fileManager = FileManager.default
         
-        // Check if we can write to Applications folder
         let applicationsURL = FileManager.default.urls(for: .applicationDirectory, in: .localDomainMask).first!
         if !fileManager.isWritableFile(atPath: applicationsURL.path) {
-            // Try using AppleScript with admin privileges
             return replaceApplicationWithAdmin(source: source, destination: destination)
         }
         
-        // Remove old app if it exists
         do {
             if fileManager.fileExists(atPath: destination.path) {
-                // Try to trash it first (safer)
                 var trashURL: NSURL?
                 try fileManager.trashItem(at: destination, resultingItemURL: &trashURL)
             }
         } catch {
-            // If trash fails, try direct removal
             do {
                 if fileManager.fileExists(atPath: destination.path) {
                     try fileManager.removeItem(at: destination)
                 }
             } catch {
                 print("Failed to remove old app: \(error)")
-                // Try with admin privileges
                 return replaceApplicationWithAdmin(source: source, destination: destination)
             }
         }
         
-        // Copy new app
         do {
             try fileManager.copyItem(at: source, to: destination)
-            
-            // Remove quarantine attribute
             removeQuarantineAttribute(from: destination)
-            
             return true
         } catch {
             print("Failed to copy app: \(error)")
-            // Try with admin privileges as fallback
             return replaceApplicationWithAdmin(source: source, destination: destination)
         }
     }
     
     private func replaceApplicationWithAdmin(source: URL, destination: URL) -> Bool {
-        // Use osascript to run with admin privileges
         let script = """
         do shell script "rm -rf '\(destination.path)' && cp -R '\(source.path)' '\(destination.path)' && xattr -d com.apple.quarantine '\(destination.path)'" with administrator privileges
         """
@@ -386,11 +402,16 @@ class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
     }
     
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        // Move to Downloads folder
+        if checker?.isAppStoreDistribution == true {
+            DispatchQueue.main.async {
+                self.checker?.isDownloading = false
+            }
+            return
+        }
+        
         let downloadsURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
         let destinationURL = downloadsURL.appendingPathComponent("fsocial-Update.dmg")
         
-        // Remove existing file if present
         try? FileManager.default.removeItem(at: destinationURL)
         
         do {
@@ -400,8 +421,6 @@ class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
                 self.checker?.downloadedDMGPath = destinationURL
                 self.checker?.isDownloading = false
                 self.checker?.downloadProgress = 1.0
-                
-                // Auto-open the DMG
                 self.checker?.installUpdate()
             }
         } catch {
@@ -436,7 +455,6 @@ struct UpdateAlertView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Header with gradient accent
             VStack(spacing: 12) {
                 ZStack {
                     Circle()
@@ -467,7 +485,6 @@ struct UpdateAlertView: View {
             .padding(.top, 24)
             .padding(.bottom, 20)
             
-            // Version comparison
             HStack(spacing: 20) {
                 VStack(spacing: 6) {
                     Text(updateChecker.currentVersionString)
@@ -506,7 +523,6 @@ struct UpdateAlertView: View {
             .cornerRadius(12)
             .padding(.horizontal, 24)
             
-            // Release notes
             if !updateChecker.releaseNotes.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("What's New")
@@ -529,7 +545,6 @@ struct UpdateAlertView: View {
                 .padding(.top, 16)
             }
             
-            // Download progress
             if updateChecker.isDownloading {
                 VStack(spacing: 10) {
                     GeometryReader { geo in
@@ -565,7 +580,6 @@ struct UpdateAlertView: View {
                 .padding(.top, 20)
             }
             
-            // Buttons
             HStack(spacing: 12) {
                 Button {
                     updateChecker.cancelDownload()

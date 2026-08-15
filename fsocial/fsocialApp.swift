@@ -20,7 +20,7 @@ struct fsocialApp: App {
             // Replace default Help menu
             CommandGroup(replacing: .help) {
                 Button("fsocial Help") {
-                    if let url = URL(string: "https://github.com/buildmase/fsocial") {
+                    if let url = URL(string: "https://github.com/masonearl/fsocial") {
                         NSWorkspace.shared.open(url)
                     }
                 }

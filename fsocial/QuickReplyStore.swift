@@ -13,25 +13,34 @@ class QuickReplyStore: ObservableObject {
     private let storageKey = "com.fsocial.quickreplies"
     
     @Published var replies: [QuickReply] = []
+    @Published var lastSaveError: String?
     
     init() {
         loadReplies()
     }
     
     private func loadReplies() {
-        if let data = UserDefaults.standard.data(forKey: storageKey),
-           let savedReplies = try? JSONDecoder().decode([QuickReply].self, from: data) {
-            replies = savedReplies
+        if let data = UserDefaults.standard.data(forKey: storageKey) {
+            do {
+                replies = try JSONDecoder().decode([QuickReply].self, from: data)
+                lastSaveError = nil
+            } catch {
+                lastSaveError = "Could not load quick replies: \(error.localizedDescription)"
+                replies = QuickReply.defaultReplies
+            }
         } else {
-            // First launch - load defaults
             replies = QuickReply.defaultReplies
             saveReplies()
         }
     }
     
     private func saveReplies() {
-        if let data = try? JSONEncoder().encode(replies) {
+        do {
+            let data = try JSONEncoder().encode(replies)
             UserDefaults.standard.set(data, forKey: storageKey)
+            lastSaveError = nil
+        } catch {
+            lastSaveError = "Could not save quick replies: \(error.localizedDescription)"
         }
     }
     

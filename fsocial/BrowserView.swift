@@ -9,7 +9,7 @@ import SwiftUI
 
 struct BrowserView: View {
     let platform: Platform
-    let coordinator: WebViewCoordinator
+    @ObservedObject var coordinator: WebViewCoordinator
     
     @State private var urlText: String = ""
     @StateObject private var automationStore = LinkedInAutomationStore()

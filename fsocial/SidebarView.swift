@@ -439,6 +439,9 @@ struct SidebarView: View {
         .padding(24)
         .frame(width: 400)
         .background(Color.appBackground)
+        .onAppear {
+            aiService.lastError = nil
+        }
     }
     
     // MARK: - Quick Replies Section

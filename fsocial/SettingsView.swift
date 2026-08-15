@@ -439,6 +439,9 @@ struct SettingsView: View {
         .padding(24)
         .frame(width: 450, height: 420)
         .background(Color.appBackground)
+        .onAppear {
+            aiService.lastError = nil
+        }
     }
 }
 

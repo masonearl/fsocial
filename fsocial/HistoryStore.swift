@@ -13,21 +13,29 @@ class HistoryStore: ObservableObject {
     private let storageKey = "com.fsocial.postHistory"
     
     @Published var posts: [PostedContent] = []
+    @Published var lastSaveError: String?
     
     init() {
         loadPosts()
     }
     
     private func loadPosts() {
-        if let data = UserDefaults.standard.data(forKey: storageKey),
-           let savedPosts = try? JSONDecoder().decode([PostedContent].self, from: data) {
-            posts = savedPosts
+        guard let data = UserDefaults.standard.data(forKey: storageKey) else { return }
+        do {
+            posts = try JSONDecoder().decode([PostedContent].self, from: data)
+            lastSaveError = nil
+        } catch {
+            lastSaveError = "Could not load post history: \(error.localizedDescription)"
         }
     }
     
     private func savePosts() {
-        if let data = try? JSONEncoder().encode(posts) {
+        do {
+            let data = try JSONEncoder().encode(posts)
             UserDefaults.standard.set(data, forKey: storageKey)
+            lastSaveError = nil
+        } catch {
+            lastSaveError = "Could not save post history: \(error.localizedDescription)"
         }
     }
     

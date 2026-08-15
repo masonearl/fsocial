@@ -36,8 +36,41 @@ struct BrowserView: View {
                 .background(Color.appBorder)
             
             // WebView
-            WebView(url: platform.url, coordinator: coordinator)
-                .background(Color.appSecondary)
+            ZStack {
+                WebView(url: platform.url, coordinator: coordinator)
+                    .background(Color.appSecondary)
+                
+                if let loadError = coordinator.loadError {
+                    VStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 28))
+                            .foregroundStyle(Color.orange)
+                        Text("Page failed to load")
+                            .font(AppTypography.bodyMedium)
+                            .foregroundStyle(Color.appText)
+                        Text(loadError)
+                            .font(AppTypography.sectionLabel)
+                            .foregroundStyle(Color.appTextMuted)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 24)
+                        Button {
+                            coordinator.clearLoadError()
+                            coordinator.reload()
+                        } label: {
+                            Text("Try Again")
+                                .font(AppTypography.bodyMedium)
+                                .foregroundStyle(Color.white)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Color.appAccent)
+                                .cornerRadius(AppDimensions.borderRadius)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.appBackground.opacity(0.92))
+                }
+            }
         }
         .background(Color.appBackground)
         .onChange(of: coordinator.currentURL) { newURL in

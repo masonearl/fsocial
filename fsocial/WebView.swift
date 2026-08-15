@@ -8,6 +8,7 @@
 import SwiftUI
 import WebKit
 import Combine
+import AppKit
 
 // MARK: - Shared Process Pool for Session Sharing
 class WebViewProcessPool {
@@ -23,41 +24,40 @@ class WebViewCoordinator: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var pageTitle: String = ""
     @Published var extractedContent: String = ""
     @Published var isMuted: Bool = true
+    @Published var loadError: String?
     
     weak var webView: WKWebView?
     
     // MARK: - Audio Control
+    /// Prefer WebKit media suspension over JS pause() — SPAs (TikTok/IG) keep creating new media nodes.
     func setMuted(_ muted: Bool) {
         isMuted = muted
         guard let webView = webView else { return }
         
-        // Use JavaScript to mute/unmute all audio and video elements
+        webView.isMuted = muted
+        webView.setAllMediaPlaybackSuspended(muted)
+        
+        // Best-effort DOM sync for already-attached elements; not the primary mute path.
         let script = muted ? """
             (function() {
-                // Mute all video elements
                 document.querySelectorAll('video').forEach(function(v) {
                     v.muted = true;
-                    v.pause();
+                    try { v.pause(); } catch (e) {}
                 });
-                // Mute all audio elements
                 document.querySelectorAll('audio').forEach(function(a) {
                     a.muted = true;
-                    a.pause();
+                    try { a.pause(); } catch (e) {}
                 });
-                // Store muted state
                 window._fsocialMuted = true;
             })();
         """ : """
             (function() {
-                // Unmute all video elements (but don't auto-play)
                 document.querySelectorAll('video').forEach(function(v) {
                     v.muted = false;
                 });
-                // Unmute all audio elements
                 document.querySelectorAll('audio').forEach(function(a) {
                     a.muted = false;
                 });
-                // Store muted state
                 window._fsocialMuted = false;
             })();
         """
@@ -65,11 +65,14 @@ class WebViewCoordinator: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         webView.evaluateJavaScript(script, completionHandler: nil)
     }
     
-    // Inject mute script on page load if muted
     func injectMuteScriptIfNeeded() {
         if isMuted {
             setMuted(true)
         }
+    }
+    
+    func clearLoadError() {
+        loadError = nil
     }
     
     func goBack() {
@@ -491,18 +494,20 @@ class WebViewCoordinator: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         DispatchQueue.main.async {
             self.isLoading = true
+            self.loadError = nil
         }
     }
     
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         DispatchQueue.main.async {
             self.isLoading = false
+            self.loadError = nil
             self.pageTitle = webView.title ?? ""
             // Update navigation state with a small delay to ensure webView state is ready
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 self.updateNavigationState()
             }
-            // Inject mute script if this tab should be muted
+            // Re-apply WebKit mute after navigation (hidden tabs stay suspended)
             self.injectMuteScriptIfNeeded()
         }
     }
@@ -547,6 +552,7 @@ class WebViewCoordinator: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         DispatchQueue.main.async {
             self.isLoading = false
             self.updateNavigationState()
+            self.surfaceLoadFailure(error)
         }
     }
     
@@ -554,7 +560,20 @@ class WebViewCoordinator: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         DispatchQueue.main.async {
             self.isLoading = false
             self.updateNavigationState()
+            self.surfaceLoadFailure(error)
         }
+    }
+    
+    private func surfaceLoadFailure(_ error: Error) {
+        let nsError = error as NSError
+        // Frame load interrupted / cancelled navigations are not user-facing failures.
+        if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
+            return
+        }
+        if nsError.domain == "WebKitErrorDomain" && nsError.code == 102 {
+            return
+        }
+        loadError = error.localizedDescription
     }
     
     // MARK: - LinkedIn Automation
@@ -773,6 +792,8 @@ struct WebView: NSViewRepresentable {
         webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         
         coordinator.webView = webView
+        webView.isMuted = coordinator.isMuted
+        webView.setAllMediaPlaybackSuspended(coordinator.isMuted)
         webView.load(URLRequest(url: url))
         
         return webView

@@ -13,6 +13,7 @@ class HashtagStore: ObservableObject {
     private let storageKey = "com.fsocial.hashtags"
     
     @Published var hashtags: [Hashtag] = []
+    @Published var lastSaveError: String?
     
     init() {
         loadHashtags()
@@ -23,15 +24,22 @@ class HashtagStore: ObservableObject {
     }
     
     private func loadHashtags() {
-        if let data = UserDefaults.standard.data(forKey: storageKey),
-           let savedHashtags = try? JSONDecoder().decode([Hashtag].self, from: data) {
-            hashtags = savedHashtags
+        guard let data = UserDefaults.standard.data(forKey: storageKey) else { return }
+        do {
+            hashtags = try JSONDecoder().decode([Hashtag].self, from: data)
+            lastSaveError = nil
+        } catch {
+            lastSaveError = "Could not load hashtags: \(error.localizedDescription)"
         }
     }
     
     private func saveHashtags() {
-        if let data = try? JSONEncoder().encode(hashtags) {
+        do {
+            let data = try JSONEncoder().encode(hashtags)
             UserDefaults.standard.set(data, forKey: storageKey)
+            lastSaveError = nil
+        } catch {
+            lastSaveError = "Could not save hashtags: \(error.localizedDescription)"
         }
     }
     

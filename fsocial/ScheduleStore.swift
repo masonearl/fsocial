@@ -9,27 +9,50 @@ import Foundation
 import SwiftUI
 import UserNotifications
 import Combine
+import AppKit
 
 class ScheduleStore: ObservableObject {
     private let storageKey = "com.fsocial.scheduledposts"
     
     @Published var posts: [ScheduledPost] = []
+    @Published var notificationStatus: UNAuthorizationStatus = .notDetermined
+    @Published var lastSaveError: String?
+    @Published var lastNotificationError: String?
+    
+    var notificationsDenied: Bool {
+        switch notificationStatus {
+        case .denied, .restricted:
+            return true
+        case .authorized, .provisional, .notDetermined:
+            return false
+        @unknown default:
+            return false
+        }
+    }
     
     init() {
         loadPosts()
+        refreshNotificationStatus()
         requestNotificationPermission()
     }
     
     private func loadPosts() {
-        if let data = UserDefaults.standard.data(forKey: storageKey),
-           let savedPosts = try? JSONDecoder().decode([ScheduledPost].self, from: data) {
-            posts = savedPosts
+        guard let data = UserDefaults.standard.data(forKey: storageKey) else { return }
+        do {
+            posts = try JSONDecoder().decode([ScheduledPost].self, from: data)
+            lastSaveError = nil
+        } catch {
+            lastSaveError = "Could not load scheduled posts: \(error.localizedDescription)"
         }
     }
     
     private func savePosts() {
-        if let data = try? JSONEncoder().encode(posts) {
+        do {
+            let data = try JSONEncoder().encode(posts)
             UserDefaults.standard.set(data, forKey: storageKey)
+            lastSaveError = nil
+        } catch {
+            lastSaveError = "Could not save scheduled posts: \(error.localizedDescription)"
         }
     }
     
@@ -97,15 +120,40 @@ class ScheduleStore: ObservableObject {
     
     // MARK: - Notifications
     
-    private func requestNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
-            if let error = error {
-                print("Notification permission error: \(error)")
+    func refreshNotificationStatus() {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            DispatchQueue.main.async {
+                self.notificationStatus = settings.authorizationStatus
             }
         }
     }
     
+    func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    self.lastNotificationError = error.localizedDescription
+                } else {
+                    self.lastNotificationError = nil
+                }
+                self.notificationStatus = granted ? .authorized : .denied
+                self.refreshNotificationStatus()
+            }
+        }
+    }
+    
+    func openNotificationSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+    
     private func scheduleNotification(for post: ScheduledPost) {
+        guard notificationStatus == .authorized || notificationStatus == .provisional || notificationStatus == .notDetermined else {
+            lastNotificationError = "Notifications are disabled. Enable them in System Settings to get post reminders."
+            return
+        }
+        
         let content = UNMutableNotificationContent()
         content.title = "Time to post!"
         content.body = String(post.content.prefix(100)) + (post.content.count > 100 ? "..." : "")
@@ -117,8 +165,12 @@ class ScheduleStore: ObservableObject {
         let request = UNNotificationRequest(identifier: post.id.uuidString, content: content, trigger: trigger)
         
         UNUserNotificationCenter.current().add(request) { error in
-            if let error = error {
-                print("Failed to schedule notification: \(error)")
+            DispatchQueue.main.async {
+                if let error = error {
+                    self.lastNotificationError = "Failed to schedule reminder: \(error.localizedDescription)"
+                } else {
+                    self.lastNotificationError = nil
+                }
             }
         }
     }

@@ -51,7 +51,7 @@ xcodebuild -project fsocial.xcodeproj -scheme fsocial -configuration Release \
 
 Download the latest release:
 ```
-https://github.com/buildmase/fsocial/releases/latest/download/fsocial.dmg
+https://github.com/masonearl/fsocial/releases/latest/download/fsocial.dmg
 ```
 
 ## Architecture

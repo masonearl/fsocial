@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Combine
+import AppKit
 
 struct SettingsView: View {
     @ObservedObject var aiService: AIService
@@ -61,14 +62,18 @@ struct SettingsView: View {
                         Text("Current Version")
                             .font(AppTypography.body)
                             .foregroundStyle(Color.appText)
-                        Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown")
+                        Text(versionLabel)
                             .font(AppTypography.sectionLabel)
                             .foregroundStyle(Color.appTextMuted)
                     }
                     
                     Spacer()
                     
-                    if updateChecker.updateAvailable {
+                    if updateChecker.isAppStoreDistribution {
+                        Text("Mac App Store")
+                            .font(AppTypography.sectionLabel)
+                            .foregroundStyle(Color.appTextMuted)
+                    } else if updateChecker.updateAvailable {
                         VStack(alignment: .trailing, spacing: 4) {
                             Text("New Version Available")
                                 .font(AppTypography.body)
@@ -80,56 +85,79 @@ struct SettingsView: View {
                     }
                 }
                 
-                HStack(spacing: 12) {
+                if updateChecker.isAppStoreDistribution {
+                    Text("Updates are delivered through the Mac App Store. This build does not download or install DMG updates.")
+                        .font(AppTypography.sectionLabel)
+                        .foregroundStyle(Color.appTextMuted)
+                    
                     Button {
-                        updateChecker.checkForUpdates()
+                        updateChecker.openAppStorePage()
                     } label: {
                         HStack(spacing: 6) {
-                            Image(systemName: "arrow.clockwise")
+                            Image(systemName: "bag.fill")
                                 .font(.system(size: 12))
-                            Text("Check for Updates")
+                            Text("Open in App Store")
                                 .font(AppTypography.body)
                         }
-                        .foregroundStyle(Color.appAccent)
+                        .foregroundStyle(Color.white)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
-                        .background(Color.appSecondary)
+                        .background(Color.appAccent)
                         .cornerRadius(AppDimensions.borderRadius)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: AppDimensions.borderRadius)
-                                .stroke(Color.appBorder, lineWidth: 1)
-                        )
                     }
                     .buttonStyle(.plain)
-                    
-                    if updateChecker.updateAvailable {
-                        if updateChecker.isDownloading {
-                            HStack(spacing: 8) {
-                                ProgressView()
-                                    .scaleEffect(0.7)
-                                Text("\(Int(updateChecker.downloadProgress * 100))%")
+                } else {
+                    HStack(spacing: 12) {
+                        Button {
+                            updateChecker.checkForUpdates()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 12))
+                                Text("Check for Updates")
                                     .font(AppTypography.body)
-                                    .foregroundStyle(Color.appAccent)
                             }
+                            .foregroundStyle(Color.appAccent)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
-                        } else {
-                            Button {
-                                updateChecker.downloadAndInstall()
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "arrow.down.circle.fill")
-                                        .font(.system(size: 12))
-                                    Text("Download & Install")
+                            .background(Color.appSecondary)
+                            .cornerRadius(AppDimensions.borderRadius)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: AppDimensions.borderRadius)
+                                    .stroke(Color.appBorder, lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        
+                        if updateChecker.updateAvailable {
+                            if updateChecker.isDownloading {
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                        .scaleEffect(0.7)
+                                    Text("\(Int(updateChecker.downloadProgress * 100))%")
                                         .font(AppTypography.body)
+                                        .foregroundStyle(Color.appAccent)
                                 }
-                                .foregroundStyle(Color.white)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
-                                .background(Color.appAccent)
-                                .cornerRadius(AppDimensions.borderRadius)
+                            } else {
+                                Button {
+                                    updateChecker.downloadAndInstall()
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "arrow.down.circle.fill")
+                                            .font(.system(size: 12))
+                                        Text("Download & Install")
+                                            .font(AppTypography.body)
+                                    }
+                                    .foregroundStyle(Color.white)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(Color.appAccent)
+                                    .cornerRadius(AppDimensions.borderRadius)
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -138,6 +166,12 @@ struct SettingsView: View {
             .background(Color.appSecondary.opacity(0.3))
             .cornerRadius(AppDimensions.borderRadius)
         }
+    }
+    
+    private var versionLabel: String {
+        let marketing = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        return "\(marketing) (\(build))"
     }
     
     // MARK: - AI Provider Section
@@ -243,7 +277,7 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                     
                     Button {
-                        if let url = URL(string: "https://github.com/buildmase/fsocial") {
+                        if let url = URL(string: "https://github.com/masonearl/fsocial") {
                             NSWorkspace.shared.open(url)
                         }
                     } label: {
@@ -376,10 +410,14 @@ struct SettingsView: View {
                 if !apiKeyInput.isEmpty && apiKeyInput != "********" {
                     let previousProvider = aiService.selectedProvider
                     aiService.setProvider(selectedProviderForSetup)
-                    aiService.saveAPIKey(apiKeyInput)
+                    let saved = aiService.saveAPIKey(apiKeyInput)
                     aiService.setProvider(previousProvider)
+                    if saved {
+                        showingAPIKeySheet = false
+                    }
+                } else {
+                    showingAPIKeySheet = false
                 }
-                showingAPIKeySheet = false
             } label: {
                 Text("Save")
                     .font(AppTypography.bodyMedium)
@@ -390,9 +428,16 @@ struct SettingsView: View {
                     .cornerRadius(AppDimensions.borderRadius)
             }
             .buttonStyle(.plain)
+            
+            if let error = aiService.lastError {
+                Text(error)
+                    .font(AppTypography.sectionLabel)
+                    .foregroundStyle(Color.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .padding(24)
-        .frame(width: 450, height: 400)
+        .frame(width: 450, height: 420)
         .background(Color.appBackground)
     }
 }

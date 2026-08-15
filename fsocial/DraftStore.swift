@@ -16,6 +16,7 @@ class DraftStore: ObservableObject {
     
     @Published var drafts: [DraftPost] = []
     @Published var currentDraft: DraftPost = DraftPost()
+    @Published var lastSaveError: String?
     
     init() {
         loadDrafts()
@@ -33,15 +34,22 @@ class DraftStore: ObservableObject {
     }
     
     private func loadDrafts() {
-        if let data = UserDefaults.standard.data(forKey: storageKey),
-           let savedDrafts = try? JSONDecoder().decode([DraftPost].self, from: data) {
-            drafts = savedDrafts
+        guard let data = UserDefaults.standard.data(forKey: storageKey) else { return }
+        do {
+            drafts = try JSONDecoder().decode([DraftPost].self, from: data)
+            lastSaveError = nil
+        } catch {
+            lastSaveError = "Could not load drafts: \(error.localizedDescription)"
         }
     }
     
     private func saveDrafts() {
-        if let data = try? JSONEncoder().encode(drafts) {
+        do {
+            let data = try JSONEncoder().encode(drafts)
             UserDefaults.standard.set(data, forKey: storageKey)
+            lastSaveError = nil
+        } catch {
+            lastSaveError = "Could not save drafts: \(error.localizedDescription)"
         }
     }
     
